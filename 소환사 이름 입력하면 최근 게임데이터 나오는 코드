@@ -1,0 +1,667 @@
+import requests
+import pandas as pd
+import numpy as np
+from pandas.io.json import json_normalize
+import json
+import sys
+
+# API 키는 따로 다운 받아야함 
+
+APIKEY = 'RGAPI-56c0ec76-5f87-43b0-b903-28c0f327da34'
+
+# 소환사 이름으로 accountID 찾기
+def assemble_URL_page(query):
+    assembled_URL = "https://kr.api.riotgames.com/lol/summoner/v4/summoners/by-name/"+query+"?api_key="+APIKEY
+    return assembled_URL
+
+# accountID 로 GameID 찾기
+def accountID_to_GameID_assemble_URL(response_df):
+    accountID_to_GameID_assemble_URL = "https://kr.api.riotgames.com/lol/match/v4/matchlists/by-account/" +response_df +  '?api_key=' + APIKEY
+    return accountID_to_GameID_assemble_URL
+
+# DataFrame 으로 변환 
+def DataFrame_Trans(accountID_to_GameID_assemble_URL):
+    x = requests.get(accountID_to_GameID_assemble_URL)
+    y = x.json()
+    z = json_normalize(y)
+    return z
+
+# GameID 로 경기 기록 불러오기
+def GameID_to_Match(x):
+    GameID_to_Match_URL = "https://kr.api.riotgames.com/lol/match/v4/matches/" + x  + "?api_key=" + APIKEY
+    return GameID_to_Match_URL
+
+# 소환사 이름 입력
+summoner_name = input('소환사 이름을 입력하세요 : ')
+
+# 소환사 이름으로 정보 받아오기
+User_URL_accountId = assemble_URL_page(summoner_name)
+
+# 받아온 정보 DataFrame 형태로 변환
+accountId_df = DataFrame_Trans(User_URL_accountId)
+
+# DataFrame 에서 accountid 만 추출 후 최근 100개 게임 정보 찾아오기
+User_URL_gameId = accountID_to_GameID_assemble_URL(accountId_df['accountId'][0])
+
+# 최근 100개의 게임 정보에서 gameid 찾기
+gameid_url = requests.get(User_URL_gameId)
+gameid_dict = gameid_url.json()
+match_df = pd.DataFrame(gameid_dict['matches'])
+gameId_array = pd.DataFrame(match_df['gameId'])
+
+#Gameid 를 통해 가장 최근 게임 정보 찾아오기
+recent_match_url = GameID_to_Match(gameId_array['gameId'][0].astype(str))
+recent_match_dict = requests.get(recent_match_url).json()
+
+#최근 게임 정보 DataFrame 형태로 변환    
+recent_match_df = json_normalize(recent_match_dict)
+
+# 오직 소환사 협곡일때만 실행
+if (recent_match_df['gameMode'].values != 'CLASSIC') :sys.exit()
+# 특성중에 participants 특성 추출 후 DataFrame 형태로 변환
+participants_df=pd.DataFrame(recent_match_dict['participants'])
+
+# 특성 중 participantIdentities  특성 추출후 DataFrame 형태로 변환 : participantIdentities_df
+# 여기서 다시 player 특성 추출 후 DataFrame 형태 변환 : player_df 
+# player_df에 summonerName 추출해 DataFrame 형태로 변환 : summonerName_df - 동그리
+participantIdentities_df = pd.DataFrame(recent_match_dict['participantIdentities'])
+
+player_df=pd.DataFrame([])
+
+for i in range(0,10):
+    player_df = pd.concat([player_df,pd.DataFrame([participantIdentities_df['player'][i]])],ignore_index = True)
+
+summonerName_df = pd.DataFrame(player_df['summonerName'])
+
+# dongri_df: summonerName_df + championId - 동그리
+dongri_df = pd.concat([summonerName_df,pd.DataFrame(participants_df['championId'])],axis=1)
+
+stats_df=pd.DataFrame([])
+
+for i in range (0,10):
+    stats_df=pd.concat([stats_df,pd.DataFrame([participants_df['stats'][i]])],ignore_index = True) 
+    # 다른 dataframe이랑 합치려면 인덱스 살려야해서 넣었음. 이 전에는 인덱스가 다 0이었음 - 동그리
+    # https://rfriend.tistory.com/256 참고
+
+  # 요거 이해가 안 되는게 왜 stats에 있는 거 순서대로 표시 안 됨? 
+  # -> 아마도 recent_match_dict['participants'] 에선 abc순 표기인데 원래는 아니어서인가?? - 동그리
+
+# kkam_df : dongri_df + stats_df - 동그리
+kkam_df = pd.concat([dongri_df,stats_df],axis=1)
+   # participantId가 앞에 있음 좋겠지만 participants_df['stats']에 있는 값이라 빼내기 극혐이라 안 했음
+   # 소환사 이름이 앞에 있는게 난 더 좋음 - 깜깜
+
+# 이긴 팀, 진 팀 나누기 : winner_df, loser_df - 동그리
+# 참고 : https://www.delftstack.com/ko/howto/python-pandas/split-pandas-dataframe/#%ED%96%89-%EC%9D%B8%EB%8D%B1%EC%8B%B1%EC%9D%84-%EC%82%AC%EC%9A%A9%ED%95%98%EC%97%AC-dataframe-%EB%B6%84%ED%95%A0 
+loser_df = kkam_df.iloc[:5,:]
+winner_df = kkam_df.iloc[5:,:] # 근데 왜 이거 마지막꺼 하나만 출력되냐ㅋㅋ 팀 나뉘어서 잘 들어갔음. 아래 코드는 머 하려는지 모르겠으니 패스 - 동그리
+
+recent_match_teams_dict = recent_match_df['teams']
+
+recent_match_df['teams']
+
+# 여기부터 동그리
+
+loser_team_dict = recent_match_df['teams'][0][0]
+winner_team_dict = recent_match_df['teams'][0][1]
+
+# 21.07.19 7pm 깜깜
+
+# recent_match_df -> 'teams' 데이터프레임으로 변환
+loser_team_df = pd.DataFrame(loser_team_dict)
+winner_team_df = pd.DataFrame(winner_team_dict)
+
+# recent_match_temas + loser_df
+loser_team_stats_participantIdentities_df = pd.concat([loser_team_df,loser_df],axis=1)
+# loser team index 순서바꾸기
+x_df=pd.DataFrame(loser_team_stats_participantIdentities_df['participantId'])
+y_df=pd.DataFrame(loser_team_stats_participantIdentities_df['summonerName'])
+z_df=pd.DataFrame(loser_team_stats_participantIdentities_df['championId'])
+new_loser_team_stats_participantIdentities_df=loser_team_stats_participantIdentities_df.drop(['participantId','summonerName','championId'],axis=1)
+new_loser_team_stats_participantIdentities_df=pd.concat([x_df,y_df,z_df,new_loser_team_stats_participantIdentities_df],axis=1)
+
+
+
+# recent_match_temas + winner_df
+# loser df 는 합쳐지는데 이 winner 는 이상하게 안합쳐짐 연구좀 -깜깜
+# 도저히 안돼서 걍 array 로 바꾼다음에 합침 ;;
+f = winner_team_df.to_numpy()
+g = winner_df.to_numpy()
+h = np.concatenate([f, g], axis=1)
+winner_team_stats_participantIdentities_df = pd.DataFrame(h,columns=loser_team_stats_participantIdentities_df.columns)
+x_df=pd.DataFrame(winner_team_stats_participantIdentities_df['participantId'])
+y_df=pd.DataFrame(winner_team_stats_participantIdentities_df['summonerName'])
+z_df=pd.DataFrame(winner_team_stats_participantIdentities_df['championId'])
+new_winner_team_stats_participantIdentities_df=winner_team_stats_participantIdentities_df.drop(['participantId','summonerName','championId'],axis=1)
+new_winner_team_stats_participantIdentities_df=pd.concat([x_df,y_df,z_df,new_winner_team_stats_participantIdentities_df],axis=1)
+
+
+
+# 사용한 데이터 구조
+
+# recent_match_df:
+#   participant_df: clear
+#     champion_df:claer
+#     stats_df:
+#     timeline_df:
+#   participantidentities_df:
+#     summoner_df:
+#   teams_df:
+
+
+# 시간 & 모드
+
+game_time = recent_match_df['gameDuration']
+game_mode = recent_match_df['gameMode']
+
+x = np.array([game_time,game_time,game_time,game_time,game_time,game_time,game_time,game_time,game_time,game_time,game_mode,game_mode,game_mode,game_mode,game_mode,game_mode,game_mode,game_mode,game_mode,game_mode]).reshape(2,-1)
+x = np.transpose(x)
+Game_type_df = pd.DataFrame(x , columns=['gameDuration','gameMode'])
+
+# spell_df
+summoner_spell1 = participants_df['spell1Id']
+summoner_spell2 = participants_df['spell2Id']
+
+x = np.array([summoner_spell1,summoner_spell2]).reshape(2,-1)
+x = np.transpose(x)
+spell_df = pd.DataFrame(x , columns= [ 'summoner_spell1', 'summoner_spell2'])
+
+
+# time line 에 있는 데이터 가져오기
+
+timeline_df = pd.DataFrame([])
+
+for i in range(0,10):
+  # 10분 ~ 20분 
+  if (game_time.values/60 >= 10 and game_time.values/60 < 20 ):
+
+      keys = participants_df['timeline'][i].keys() 
+      if 'creepsPerMinDeltas' in keys: creepsPerMinDeltas_0_10 = participants_df['timeline'][i]['creepsPerMinDeltas']['0-10']
+      if 'csDiffPerMinDeltas' in keys: csDiffPerMinDeltas_0_10 = participants_df['timeline'][i]['csDiffPerMinDeltas']['0-10']
+      if 'damageTakenDiffPerMinDeltas' in keys: damageTakenDiffPerMinDeltas_0_10 = participants_df['timeline'][i]['damageTakenDiffPerMinDeltas']['0-10']
+      if 'damageTakenPerMinDeltas' in keys: damageTakenPerMinDeltas_0_10 = participants_df['timeline'][i]['damageTakenPerMinDeltas']['0-10']
+      if 'goldPerMinDeltas' in keys: goldPerMinDeltas_0_10 = participants_df['timeline'][i]['goldPerMinDeltas']['0-10']
+      if 'xpDiffPerMinDeltas' in keys: xpDiffPerMinDeltas_0_10 = participants_df['timeline'][i]['xpDiffPerMinDeltas']['0-10']
+      if 'xpPerMinDeltas' in keys: xpPerMinDeltas_0_10 = participants_df['timeline'][i]['xpPerMinDeltas']['0-10']
+
+      x = np.array([creepsPerMinDeltas_0_10,csDiffPerMinDeltas_0_10,damageTakenDiffPerMinDeltas_0_10,damageTakenPerMinDeltas_0_10,goldPerMinDeltas_0_10,xpDiffPerMinDeltas_0_10,xpPerMinDeltas_0_10])
+
+      x = x.reshape(1,-1)
+      x = pd.DataFrame(x,columns=['creepsPerMinDeltas_0_10','csDiffPerMinDeltas_0_10','damageTakenDiffPerMinDeltas_0_10','damageTakenPerMinDeltas_0_10','goldPerMinDeltas_0_10','xpDiffPerMinDeltas_0_10','xpPerMinDeltas_0_10'])
+      timeline_df = pd.concat([timeline_df,x])
+
+      timeline_df = timeline_df.reset_index()
+      timeline_df = timeline_df.drop('index',axis=1)
+  # 20분 ~ 30분 
+  if (game_time.values/60 >= 20 and game_time.values/60 < 30 ):
+     
+      keys = participants_df['timeline'][i].keys()
+
+      if 'creepsPerMinDeltas' in keys: creepsPerMinDeltas_0_10 = participants_df['timeline'][i]['creepsPerMinDeltas']['0-10']
+      else : creepsPerMinDeltas_0_10 = []
+      if 'creepsPerMinDeltas' in keys: creepsPerMinDeltas_10_20 = participants_df['timeline'][i]['creepsPerMinDeltas']['10-20']
+      else : creepsPerMinDeltas_0_10 = []
+      if 'csDiffPerMinDeltas' in keys: csDiffPerMinDeltas_0_10 = participants_df['timeline'][i]['csDiffPerMinDeltas']['0-10']
+      else : csDiffPerMinDeltas_0_10 = []
+      if 'csDiffPerMinDeltas' in keys: csDiffPerMinDeltas_10_20 = participants_df['timeline'][i]['csDiffPerMinDeltas']['10-20']
+      else : csDiffPerMinDeltas_10_20 = []
+      if 'damageTakenDiffPerMinDeltas' in keys: damageTakenDiffPerMinDeltas_0_10 = participants_df['timeline'][i]['damageTakenDiffPerMinDeltas']['0-10']
+      else : damageTakenDiffPerMinDeltas_0_10 = []
+      if 'damageTakenDiffPerMinDeltas' in keys: damageTakenDiffPerMinDeltas_10_20 = participants_df['timeline'][i]['damageTakenDiffPerMinDeltas']['10-20']
+      else : damageTakenDiffPerMinDeltas_0_10 = []
+      if 'damageTakenPerMinDeltas' in keys: damageTakenPerMinDeltas_0_10 = participants_df['timeline'][i]['damageTakenPerMinDeltas']['0-10']
+      else : damageTakenPerMinDeltas_0_10 = []
+      if 'damageTakenPerMinDeltas' in keys: damageTakenPerMinDeltas_10_20 = participants_df['timeline'][i]['damageTakenPerMinDeltas']['10-20']
+      else : damageTakenPerMinDeltas_10_20 = []
+      if 'goldPerMinDeltas' in keys: goldPerMinDeltas_0_10 = participants_df['timeline'][i]['goldPerMinDeltas']['0-10']
+      else : goldPerMinDeltas_0_10 = []
+      if 'goldPerMinDeltas' in keys: goldPerMinDeltas_10_20 = participants_df['timeline'][i]['goldPerMinDeltas']['10-20']
+      else : goldPerMinDeltas_10_20 = []
+      if 'xpDiffPerMinDeltas' in keys: xpDiffPerMinDeltas_0_10 = participants_df['timeline'][i]['xpDiffPerMinDeltas']['0-10']
+      else : xpDiffPerMinDeltas_0_10 = []
+      if 'xpDiffPerMinDeltas' in keys: xpDiffPerMinDeltas_10_20 = participants_df['timeline'][i]['xpDiffPerMinDeltas']['10-20']
+      else : xpDiffPerMinDeltas_10_20 = []
+      if 'xpPerMinDeltas' in keys: xpPerMinDeltas_0_10 = participants_df['timeline'][i]['xpPerMinDeltas']['0-10']
+      else : xpPerMinDeltas_0_10 = []
+      if 'xpPerMinDeltas' in keys: xpPerMinDeltas_10_20 = participants_df['timeline'][i]['xpPerMinDeltas']['10-20']
+      else : xpPerMinDeltas_10_20 = []
+
+      x = np.array([creepsPerMinDeltas_0_10,creepsPerMinDeltas_10_20,
+                    csDiffPerMinDeltas_0_10,csDiffPerMinDeltas_10_20,
+                    damageTakenDiffPerMinDeltas_0_10,damageTakenDiffPerMinDeltas_10_20,
+                    damageTakenPerMinDeltas_0_10,damageTakenPerMinDeltas_10_20,
+                    goldPerMinDeltas_0_10,goldPerMinDeltas_10_20,
+                    xpDiffPerMinDeltas_0_10,xpDiffPerMinDeltas_10_20,
+                    xpPerMinDeltas_0_10,xpPerMinDeltas_10_20])
+
+      x = x.reshape(1,-1)
+      x = pd.DataFrame(x,columns=['creepsPerMinDeltas_0_10','creepsPerMinDeltas_10_20',
+                    'csDiffPerMinDeltas_0_10','csDiffPerMinDeltas_10_20',
+                    'damageTakenDiffPerMinDeltas_0_10','damageTakenDiffPerMinDeltas_10_20',
+                    'damageTakenPerMinDeltas_0_10','damageTakenPerMinDeltas_10_20',
+                    'goldPerMinDeltas_0_10','goldPerMinDeltas_10_20',
+                    'xpDiffPerMinDeltas_0_10','xpDiffPerMinDeltas_10_20',
+                    'xpPerMinDeltas_0_10','xpPerMinDeltas_10_20'])
+      timeline_df = pd.concat([timeline_df,x])
+
+      timeline_df = timeline_df.reset_index()
+      timeline_df = timeline_df.drop('index',axis=1)      
+      
+  # 30분 이상 
+  if (game_time.values/60 >= 30 ):
+     if 'creepsPerMinDeltas' in keys: creepsPerMinDeltas_0_10 = participants_df['timeline'][i]['creepsPerMinDeltas']['0-10']
+     if 'creepsPerMinDeltas' in keys: creepsPerMinDeltas_10_20 = participants_df['timeline'][i]['creepsPerMinDeltas']['10-20']
+     if 'creepsPerMinDeltas' in keys: creepsPerMinDeltas_20_30 = participants_df['timeline'][i]['creepsPerMinDeltas']['20-30']
+
+     if 'csDiffPerMinDeltas' in keys: csDiffPerMinDeltas_0_10 = participants_df['timeline'][i]['csDiffPerMinDeltas']['0-10']
+     if 'csDiffPerMinDeltas' in keys: csDiffPerMinDeltas_10_20 = participants_df['timeline'][i]['csDiffPerMinDeltas']['10-20']
+     if 'csDiffPerMinDeltas' in keys: csDiffPerMinDeltas_20_30 = participants_df['timeline'][i]['csDiffPerMinDeltas']['20-30']
+
+     if 'damageTakenDiffPerMinDeltas' in keys: damageTakenDiffPerMinDeltas_0_10 = participants_df['timeline'][i]['damageTakenDiffPerMinDeltas']['0-10']
+     if 'damageTakenDiffPerMinDeltas' in keys: damageTakenDiffPerMinDeltas_10_20 = participants_df['timeline'][i]['damageTakenDiffPerMinDeltas']['10-20']
+     if 'damageTakenDiffPerMinDeltas' in keys: damageTakenDiffPerMinDeltas_20_30 = participants_df['timeline'][i]['damageTakenDiffPerMinDeltas']['20-30']
+
+     if 'damageTakenPerMinDeltas' in keys: damageTakenPerMinDeltas_0_10 = participants_df['timeline'][i]['damageTakenPerMinDeltas']['0-10']
+     if 'damageTakenPerMinDeltas' in keys: damageTakenPerMinDeltas_10_20 = participants_df['timeline'][i]['damageTakenPerMinDeltas']['10-20']
+     if 'damageTakenPerMinDeltas' in keys: damageTakenPerMinDeltas_20_30 = participants_df['timeline'][i]['damageTakenPerMinDeltas']['20-30']
+
+     if 'goldPerMinDeltas' in keys: goldPerMinDeltas_0_10 = participants_df['timeline'][i]['goldPerMinDeltas']['0-10']
+     if 'goldPerMinDeltas' in keys: goldPerMinDeltas_10_20 = participants_df['timeline'][i]['goldPerMinDeltas']['10-20']
+     if 'goldPerMinDeltas' in keys: goldPerMinDeltas_20_30 = participants_df['timeline'][i]['goldPerMinDeltas']['20-30']
+
+     if 'xpDiffPerMinDeltas' in keys: xpDiffPerMinDeltas_0_10 = participants_df['timeline'][i]['xpDiffPerMinDeltas']['0-10']
+     if 'xpDiffPerMinDeltas' in keys: xpDiffPerMinDeltas_10_20 = participants_df['timeline'][i]['xpDiffPerMinDeltas']['10-20']
+     if 'xpDiffPerMinDeltas' in keys: xpDiffPerMinDeltas_20_30 = participants_df['timeline'][i]['xpDiffPerMinDeltas']['20-30']
+
+
+     if 'xpPerMinDeltas' in keys: xpPerMinDeltas_0_10 = participants_df['timeline'][i]['xpPerMinDeltas']['0-10']
+     if 'xpPerMinDeltas' in keys: xpPerMinDeltas_10_20 = participants_df['timeline'][i]['xpPerMinDeltas']['10-20']
+     if 'xpPerMinDeltas' in keys: xpPerMinDeltas_20_30 = participants_df['timeline'][i]['xpPerMinDeltas']['20-30']
+    
+     x = np.array([creepsPerMinDeltas_0_10, creepsPerMinDeltas_10_20, creepsPerMinDeltas_20_30,
+                    csDiffPerMinDeltas_0_10, csDiffPerMinDeltas_10_20, csDiffPerMinDeltas_20_30,
+                    damageTakenDiffPerMinDeltas_0_10,damageTakenDiffPerMinDeltas_10_20,damageTakenDiffPerMinDeltas_20_30,
+                    damageTakenPerMinDeltas_0_10,damageTakenPerMinDeltas_10_20,damageTakenPerMinDeltas_20_30,
+                    goldPerMinDeltas_0_10,goldPerMinDeltas_10_20,goldPerMinDeltas_20_30,
+                    xpDiffPerMinDeltas_0_10,xpDiffPerMinDeltas_10_20,xpDiffPerMinDeltas_20_30,
+                    xpPerMinDeltas_0_10,xpPerMinDeltas_10_20,xpPerMinDeltas_20_30])
+
+     x = x.reshape(1,-1)
+
+     x = pd.DataFrame(x,columns=['creepsPerMinDeltas_0_10','creepsPerMinDeltas_10_20','creepsPerMinDeltas_20_30', 
+                    'csDiffPerMinDeltas_0_10','csDiffPerMinDeltas_10_20','csDiffPerMinDeltas_20_30',
+                    'damageTakenDiffPerMinDeltas_0_10','damageTakenDiffPerMinDeltas_10_20','damageTakenDiffPerMinDeltas_20_30',
+                    'damageTakenPerMinDeltas_0_10','damageTakenPerMinDeltas_10_20','damageTakenPerMinDeltas_20_30',
+                    'goldPerMinDeltas_0_10','goldPerMinDeltas_10_20','goldPerMinDeltas_20_30',
+                    'xpDiffPerMinDeltas_0_10','xpDiffPerMinDeltas_10_20','xpDiffPerMinDeltas_20_30',
+                    'xpPerMinDeltas_0_10','xpPerMinDeltas_10_20','xpPerMinDeltas_20_30'])
+     timeline_df = pd.concat([timeline_df,x])
+
+     timeline_df = timeline_df.reset_index()
+     timeline_df = timeline_df.drop('index',axis=1)
+
+
+# gametype_df, spell_df, timeline_df 결합 
+Gametype__spell = pd.concat([Game_type_df,spell_df],axis=1)
+Gametype__spell__timeline = pd.concat([Gametype__spell,timeline_df],axis=1)
+
+winner__losser__df = pd.concat([new_winner_team_stats_participantIdentities_df,new_loser_team_stats_participantIdentities_df])
+winner__losser__df = winner__losser__df.reset_index()
+winner__losser__df = winner__losser__df.drop(['index'],axis=1)
+updataed_df = pd.concat([winner__losser__df,Gametype__spell__timeline],axis=1)
+
+
+# https://developer.riotgames.com/apis#match-v4/GET_getMatch 여기 데이터 클리어
+# 사용한 데이터 구조
+# recent_match_df:
+#   gameDurateion_df:
+#   gameMode_df:
+#   participants_df: 
+#     spell_df:
+#     champion_df:
+#     stats_df:
+#     timeline_df:
+#   participantidentities_df:
+#     summoner_df:
+#   teams_df:
+# 전부 다 모음,10분때,20분때,30분이상 경기로 구분됨,칼바람 검색시 exit 됨
+
+# https://developer.riotgames.com/apis#match-v4/GET_getMatchTimeline 시계열 정보 받아오기
+
+APIKEY = 'RGAPI-d5f03451-1c91-496c-b5fb-d2a345e42011'
+
+# 시계열 정보 URL
+def time_line_data(match_id):
+  url_time_line_match = 'https://kr.api.riotgames.com/lol/match/v4/timelines/by-match/' + match_id + '?api_key=' + APIKEY
+  return url_time_line_match
+
+# URL 불러오기
+url_time_line_match = time_line_data(gameId_array['gameId'][0].astype(str))
+x = requests.get(url_time_line_match)
+x = x.json()
+
+# 시계열 데이터 모음집
+
+def gold_time(number):
+  
+  total_gold_array = np.array([])
+  timestamp_array = np.array([])
+
+  for i in range(0,len(x['frames'])):
+    total_gold_array = np.append(total_gold_array,x['frames'][i]['participantFrames'][str(number)]['totalGold'])
+  
+  for i in range(0,len(x['frames'])):
+    timestamp_array = np.append(timestamp_array,x['frames'][i]['timestamp'])
+
+  participantId = x['frames'][1]['participantFrames'][str(number)]['participantId']
+  summonerName = updataed_df[updataed_df['participantId']==participantId]['summonerName'].values[0]
+
+  total_gold_df = pd.DataFrame(total_gold_array)
+  timestamp_df = pd.DataFrame(timestamp_array)
+  totalgold_time_df = pd.concat([timestamp_df,total_gold_df],axis=1)
+  totalgold_time_df.columns = ['Time','Gold']
+  return totalgold_time_df
+
+def level_time(number):
+  
+  level_array = np.array([])
+  timestamp_array = np.array([])
+
+  for i in range(0,len(x['frames'])):
+    level_array = np.append(level_array,x['frames'][i]['participantFrames'][str(number)]['level'])
+  
+  for i in range(0,len(x['frames'])):
+    timestamp_array = np.append(timestamp_array,x['frames'][i]['timestamp'])
+
+  participantId = x['frames'][1]['participantFrames'][str(number)]['participantId']
+  summonerName = updataed_df[updataed_df['participantId']==participantId]['summonerName'].values[0]
+
+  level_df = pd.DataFrame(level_array)
+  timestamp_df = pd.DataFrame(timestamp_array)
+  level_time_df = pd.concat([timestamp_df,level_df],axis=1)
+  level_time_df.columns = ['Time','Level']
+  return level_time_df
+
+def jungleMinionsKilled_time(number):
+  
+  jungleMinionsKilled_array = np.array([])
+  timestamp_array = np.array([])
+
+  for i in range(0,len(x['frames'])):
+    jungleMinionsKilled_array = np.append(jungleMinionsKilled_array,x['frames'][i]['participantFrames'][str(number)]['jungleMinionsKilled'])
+  
+  for i in range(0,len(x['frames'])):
+    timestamp_array = np.append(timestamp_array,x['frames'][i]['timestamp'])
+
+  participantId = x['frames'][1]['participantFrames'][str(number)]['participantId']
+  summonerName = updataed_df[updataed_df['participantId']==participantId]['summonerName'].values[0]
+
+  jungleMinionsKilled_df = pd.DataFrame(jungleMinionsKilled_array)
+  timestamp_df = pd.DataFrame(timestamp_array)
+  jungleMinionsKilled_time_df = pd.concat([timestamp_df,jungleMinionsKilled_df],axis=1)
+  jungleMinionsKilled_time_df.columns = ['Time','jungleMinionsKilled']
+  return jungleMinionsKilled_time_df
+
+def minionsKilled_time(number):
+  
+  minionsKilled_array = np.array([])
+  timestamp_array = np.array([])
+
+  for i in range(0,len(x['frames'])):
+    minionsKilled_array = np.append(minionsKilled_array,x['frames'][i]['participantFrames'][str(number)]['minionsKilled'])
+  
+  for i in range(0,len(x['frames'])):
+    timestamp_array = np.append(timestamp_array,x['frames'][i]['timestamp'])
+
+  participantId = x['frames'][1]['participantFrames'][str(number)]['participantId']
+  summonerName = updataed_df[updataed_df['participantId']==participantId]['summonerName'].values[0]
+
+  minionsKilled_df = pd.DataFrame(minionsKilled_array)
+  timestamp_df = pd.DataFrame(timestamp_array)
+  minionsKilled_time_df = pd.concat([timestamp_df,minionsKilled_df],axis=1)
+  minionsKilled_time_df.columns = ['Time','MinionsKilled']
+  return minionsKilled_time_df
+
+def xp_time(number):
+  
+  xp_array = np.array([])
+  timestamp_array = np.array([])
+
+  for i in range(0,len(x['frames'])):
+    xp_array = np.append(xp_array,x['frames'][i]['participantFrames'][str(number)]['xp'])
+  
+  for i in range(0,len(x['frames'])):
+    timestamp_array = np.append(timestamp_array,x['frames'][i]['timestamp'])
+
+  participantId = x['frames'][1]['participantFrames'][str(number)]['participantId']
+  summonerName = updataed_df[updataed_df['participantId']==participantId]['summonerName'].values[0]
+
+  xp_df = pd.DataFrame(xp_array)
+  timestamp_df = pd.DataFrame(timestamp_array)
+  xp_time_df = pd.concat([timestamp_df,xp_df],axis=1)
+  xp_time_df.columns = ['Time','xp']
+  return xp_time_df
+
+def loc_time(number):
+  
+  x_loc_array = np.array([])
+  y_loc_array = np.array([])
+  timestamp_array = np.array([])
+
+  for i in range(0,len(x['frames'])-1):
+    x_loc_array = np.append(x_loc_array,x['frames'][i]['participantFrames'][str(number)]['position']['x'])
+    y_loc_array = np.append(y_loc_array,x['frames'][i]['participantFrames'][str(number)]['position']['y'])
+
+  for i in range(0,len(x['frames'])):
+    timestamp_array = np.append(timestamp_array,x['frames'][i]['timestamp'])
+
+  participantId = x['frames'][1]['participantFrames'][str(number)]['participantId']
+  summonerName = updataed_df[updataed_df['participantId']==participantId]['summonerName'].values[0]
+
+  x_loc_df = pd.DataFrame(x_loc_array)
+  y_loc_df = pd.DataFrame(y_loc_array)
+  loc_df = pd.concat([x_loc_df,y_loc_df],axis = 1)
+  timestamp_df = pd.DataFrame(timestamp_array)
+  loc_time_df = pd.concat([timestamp_df,loc_df],axis=1)
+  loc_time_df.columns = ['Time','x','y']
+  loc_time_df.loc[loc_time_df.shape[0]-1,'x'] = loc_time_df.loc[loc_time_df.shape[0]-2,'x']
+  loc_time_df.loc[loc_time_df.shape[0]-1,'y'] = loc_time_df.loc[loc_time_df.shape[0]-2,'y']
+  return loc_time_df
+
+gold_time_df = gold_time(1)
+# parciapntID 를 gold_time_df 에 넣었음
+participantId = pd.DataFrame(np.array([x['frames'][1]['participantFrames']['1']['participantId']]))
+gold_time_df = pd.concat([participantId,gold_time_df],axis=1)
+gold_time_df.columns = ['participantId','Time','Gold']
+
+
+
+# Time_Series_Data_Visualization
+
+for i in range(1,11):
+  gold_time_df = gold_time(i)
+  # parciapntID 를 gold_time_df 에 넣었음
+  participantId = pd.DataFrame(np.array([x['frames'][1]['participantFrames'][str(i)]['participantId']]))
+  gold_time_df = pd.concat([participantId,gold_time_df],axis=1)
+  gold_time_df.columns = ['participantId','Time','Gold']
+
+  # 골드 시간
+  gold_time_df
+  # 레벨 시간
+  level_time_df = level_time(i)
+  # 정글미니언 시간
+  jungleMinionsKilled_time_df = jungleMinionsKilled_time(i)
+  # 미니언 시간
+  minionsKilled_time_df = minionsKilled_time(i)
+  # xp 시간
+  xp_time_df = xp_time(i)
+  # 위치 시간
+  loc_time_df = loc_time(i)
+
+#시계열 데이터
+
+time_event_df = pd.DataFrame([])
+
+for i in range(1,len(x['frames'])):
+  for j in range(0,len(x['frames'][i]['events'])):
+    key = x['frames'][i]['events'][j].keys()
+    cnt = 0
+    for k in key:
+      if (np.array(x['frames'][i]['events'][j][str(k)]).shape != () ) :
+       cnt = cnt +1
+       problem_key = str(k)
+       x['frames'][i]['events'][j][problem_key] = str(x['frames'][i]['events'][j][problem_key])
+       f = pd.DataFrame(x['frames'][i]['events'][j],index=[j])
+       time_event_df = pd.concat([time_event_df,f])
+    if cnt == 1:
+      continue
+    else:
+       f = pd.DataFrame(x['frames'][i]['events'][j],index=[j])
+       time_event_df = pd.concat([time_event_df,f])
+      
+    
+time_event_1_df = time_event_df[time_event_df['participantId']==1].reset_index()
+time_event_2_df = time_event_df[time_event_df['participantId']==2].reset_index()
+time_event_3_df = time_event_df[time_event_df['participantId']==3].reset_index()
+time_event_4_df = time_event_df[time_event_df['participantId']==4].reset_index()
+time_event_5_df = time_event_df[time_event_df['participantId']==5].reset_index()
+time_event_6_df = time_event_df[time_event_df['participantId']==6].reset_index()
+time_event_7_df = time_event_df[time_event_df['participantId']==7].reset_index()
+time_event_8_df = time_event_df[time_event_df['participantId']==8].reset_index()
+time_event_9_df = time_event_df[time_event_df['participantId']==9].reset_index()
+time_event_10_df = time_event_df[time_event_df['participantId']==10].reset_index()
+
+def type_itemId_df(x):
+  itemId_df = x[(x['type']=='ITEM_PURCHASED') | (x['type']=='ITEM_DESTROYED') | (x['type']=='ITEM_UNDO')|(x['type']=='ITEM_SOLD')]['itemId']
+  type_df = x[(x['type']=='ITEM_PURCHASED') | (x['type']=='ITEM_DESTROYED') | (x['type']=='ITEM_UNDO')|(x['type']=='ITEM_SOLD')]['type']
+  type_itemId = pd.concat([type_df,itemId_df],axis=1)
+  return type_itemId
+def skill_tree(x):
+  skilltree_df = x[(x['type'] == 'SKILL_LEVEL_UP')]
+  return skilltree_df['skillSlot']
+
+# 아이템 트리
+type_itemid_1 = type_itemId_df(time_event_1_df)
+type_itemid_2 = type_itemId_df(time_event_2_df)
+type_itemid_3 = type_itemId_df(time_event_3_df)
+type_itemid_4 = type_itemId_df(time_event_4_df)
+type_itemid_5 = type_itemId_df(time_event_5_df)
+type_itemid_6 = type_itemId_df(time_event_6_df)
+type_itemid_7 = type_itemId_df(time_event_7_df)
+type_itemid_8 = type_itemId_df(time_event_8_df)
+type_itemid_9 = type_itemId_df(time_event_9_df)
+type_itemid_10 = type_itemId_df(time_event_10_df)
+# 스킬트리
+skill_tree_1 = skill_tree(time_event_1_df)
+skill_tree_2 = skill_tree(time_event_2_df)
+skill_tree_3 = skill_tree(time_event_3_df)
+skill_tree_4 = skill_tree(time_event_4_df)
+skill_tree_5 = skill_tree(time_event_5_df)
+skill_tree_6 = skill_tree(time_event_6_df)
+skill_tree_7 = skill_tree(time_event_7_df)
+skill_tree_8 = skill_tree(time_event_8_df)
+skill_tree_9 = skill_tree(time_event_9_df)
+skill_tree_10 = skill_tree(time_event_10_df)
+
+# Match_Data
+updataed_df
+
+# participantid 1 time series
+gold_time_df_1 = gold_time(1)
+level_time_df_1 = level_time(1)
+jungleMinionsKilled_time_df_1 = jungleMinionsKilled_time(1)
+minionsKilled_time_df_1 = minionsKilled_time(1)
+xp_time_df_1 = xp_time(1)
+loc_time_df_1 = loc_time(1)
+type_itemid_1
+skill_tree_1
+
+# participantid 2 time series
+gold_time_df_2 = gold_time(2)
+level_time_df_2 = level_time(2)
+jungleMinionsKilled_time_df_2 = jungleMinionsKilled_time(2)
+minionsKilled_time_df_2 = minionsKilled_time(2)
+xp_time_df_2 = xp_time(2)
+loc_time_df_2 = loc_time(2)
+type_itemid_2
+skill_tree_2
+
+# participantid 3 time series
+gold_time_df_3 = gold_time(3)
+level_time_df_3 = level_time(3)
+jungleMinionsKilled_time_df_3 = jungleMinionsKilled_time(3)
+minionsKilled_time_df_3 = minionsKilled_time(3)
+xp_time_df_3 = xp_time(3)
+loc_time_df_3 = loc_time(3)
+type_itemid_3
+skill_tree_3
+
+# participantid 4 time series
+gold_time_df_4 = gold_time(4)
+level_time_df_4 = level_time(4)
+jungleMinionsKilled_time_df_4 = jungleMinionsKilled_time(4)
+minionsKilled_time_df_4 = minionsKilled_time(4)
+xp_time_df_4 = xp_time(4)
+loc_time_df_4 = loc_time(4)
+type_itemid_4
+skill_tree_4
+
+# participantid 5 time series
+gold_time_df_5 = gold_time(5)
+level_time_df_5 = level_time(5)
+jungleMinionsKilled_time_df_5 = jungleMinionsKilled_time(5)
+minionsKilled_time_df_5 = minionsKilled_time(5)
+xp_time_df_5 = xp_time(5)
+loc_time_df_5 = loc_time(5)
+type_itemid_5
+skill_tree_5
+
+# participantid 6 time series
+gold_time_df_6 = gold_time(6)
+level_time_df_6 = level_time(6)
+jungleMinionsKilled_time_df_6 = jungleMinionsKilled_time(6)
+minionsKilled_time_df_6 = minionsKilled_time(6)
+xp_time_df_6 = xp_time(6)
+loc_time_df_6 = loc_time(6)
+type_itemid_6
+skill_tree_6
+
+# participantid 7 time series
+gold_time_df_7 = gold_time(7)
+level_time_df_7 = level_time(7)
+jungleMinionsKilled_time_df_7 = jungleMinionsKilled_time(7)
+minionsKilled_time_df_7 = minionsKilled_time(7)
+xp_time_df_7 = xp_time(7)
+loc_time_df_7 = loc_time(7)
+type_itemid_7
+skill_tree_7
+
+# participantid 8 time series
+gold_time_df_8 = gold_time(8)
+level_time_df_8 = level_time(8)
+jungleMinionsKilled_time_df_8 = jungleMinionsKilled_time(8)
+minionsKilled_time_df_8 = minionsKilled_time(8)
+xp_time_df_8 = xp_time(8)
+loc_time_df_8 = loc_time(8)
+type_itemid_8
+skill_tree_8
+
+# participantid 9 time series
+gold_time_df_9 = gold_time(9)
+level_time_df_9 = level_time(9)
+jungleMinionsKilled_time_df_9 = jungleMinionsKilled_time(9)
+minionsKilled_time_df_9 = minionsKilled_time(9)
+xp_time_df_9 = xp_time(9)
+loc_time_df_9 = loc_time(9)
+type_itemid_9
+skill_tree_9
+
+# participantid 10 time series
+gold_time_df_10 = gold_time(10)
+level_time_df_10 = level_time(10)
+jungleMinionsKilled_time_df_10 = jungleMinionsKilled_time(10)
+minionsKilled_time_df_10 = minionsKilled_time(10)
+xp_time_df_10 = xp_time(10)
+loc_time_df_10 = loc_time(10)
+type_itemid_10
+skill_tree_10
